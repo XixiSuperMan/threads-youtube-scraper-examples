@@ -1,11 +1,12 @@
-# YouTube & Threads monitoring — runnable examples
+# YouTube & Threads scraping — runnable examples
 
-Small, dependency-light examples for two Apify Actors that watch a platform for **new** content and return only what appeared since your last run.
+Small, dependency-light examples for three Apify Actors: two that watch a platform for **new** content and return only what appeared since your last run, and one that pulls YouTube transcripts and subtitles in bulk.
 
 - **[YouTube Scraper | Monitor New Videos | No API Key](https://apify.com/reportable_broth/youtube-scraper-monitor)** — no Google Cloud project, no quota units
 - **[Threads Scraper | No Login](https://apify.com/reportable_broth/threads-scraper-monitor)** — no account, no cookies
+- **[YouTube Transcript Scraper | SRT, VTT & Translation](https://apify.com/reportable_broth/youtube-transcript-scraper)** — transcripts by URL, playlist, channel or keyword; SRT/VTT files; 55 languages
 
-Pay per result, platform usage included: **$0.99 / 1,000 posts** on Threads and **$0.45 / 1,000 videos** on YouTube. With only-new mode on you are not charged twice for the same item.
+Pay per result, platform usage included: **$1.99 / 1,000** posts or videos, **$2.99 / 1,000** transcripts. With only-new mode on you are not charged twice for the same item, and a transcript the uploader switched off is not charged at all.
 
 Every snippet below was run against the live Actors before publishing.
 
@@ -127,9 +128,45 @@ Put that on an Apify Schedule every 15 minutes and you have an alerting feed tha
 
 ---
 
+## 7. Pull transcripts and save them as subtitle files
+
+```python
+import os
+from apify_client import ApifyClient
+
+client = ApifyClient(os.environ["APIFY_TOKEN"])
+
+run = client.actor("reportable_broth/youtube-transcript-scraper").call(run_input={
+    "videoUrls": ["https://www.youtube.com/watch?v=OrElyY7MFVs"],
+    "subtitleFormats": ["srt"],   # also "vtt"
+    "translateTo": "zh-TW",       # leave out to skip translation
+})
+
+for row in client.dataset(run.default_dataset_id).iterate_items():
+    if row["transcript_status"] != "ok":
+        print(row["video_id"], "->", row["transcript_status"])
+        continue
+    open(f"{row['video_id']}.srt", "w", encoding="utf-8").write(row["srt"])
+    if row.get("translated_srt"):
+        open(f"{row['video_id']}.zh.srt", "w",
+             encoding="utf-8").write(row["translated_srt"])
+```
+
+The timings are identical in both files, so the translated subtitles line up with
+the video. You can also feed it `playlistUrls`, `channelUrls` or `keywords` instead of URLs and it
+will find the videos itself.
+
+**A note on "100+ languages."** That number, which several transcript Actors
+advertise, is YouTube's own auto-translate. Tested on 2026-09-22 across four
+videos, it returned a translation for none of them — two blocked, two no longer
+offering the target language. This Actor translates the transcript itself and
+every one of its 55 languages was tested on 2026-09-23.
+
+---
+
 ## Notes
 
-- **Timestamps on YouTube are approximate.** YouTube publishes relative text (`"12 days ago"`) on public pages, never an exact time. The field is called `published_ts_approx` for that reason — good enough for "in the last 24 hours", not good enough to sort uploads minutes apart.
+- **Listing pages give relative times; the video page gives an exact one.** A search or channel listing only shows `"12 days ago"`, which is why the field is called `published_ts_approx` — good enough for "in the last 24 hours", not good enough to sort uploads minutes apart. Turn on `enrichVideos` and the Actor opens each video for `published_at`, the exact ISO 8601 time. (An earlier version of this file said YouTube never exposes an exact time. That was wrong.)
 - **An empty run is usually correct.** With `onlyNew` on, nothing new means nothing returned.
 - **Residential proxy is the default** and worth keeping. Both platforms serve a stripped page to flagged IPs rather than returning an error, so a clean exit IP matters more than you would expect.
 - Public content only. Neither Actor touches private, unlisted or members-only material.
